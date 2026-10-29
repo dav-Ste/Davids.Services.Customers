@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <UserSecretsId>davids-customers-api</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+    <PackageReference Include="Swashbuckle.AspNetCore.SwaggerUI" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Davids.Services.Customers.Infrastructure/Davids.Services.Customers.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup Label="Shared ServiceDefaults (ProjectReference by default; PackageReference when UseSharedPackageReference=true)">
+    <ProjectReference Include="../../../Davids.Shared/src/Davids.ServiceDefaults/Davids.ServiceDefaults.csproj" Condition="'$(UseSharedPackageReference)' != 'true'" />
+    <PackageReference Include="Davids.ServiceDefaults" Condition="'$(UseSharedPackageReference)' == 'true'" />
+  </ItemGroup>
+</Project>

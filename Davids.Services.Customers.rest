@@ -1,0 +1,58 @@
+# Replace the port with api-gateway's HTTP endpoint shown in the Aspire dashboard.
+# Create/sign in a user through Davids.APIGateway.rest; use the GUID from the access token's sub claim.
+@gateway = http://localhost:17320
+@customers = {{gateway}}/customers
+@customerId = 00000000-0000-0000-0000-000000000001
+@userAccessToken = paste-customer-access-token-here
+@adminAccessToken = paste-admin-access-token-here
+@state = locked
+
+### Customer directory list (administrator)
+GET {{customers}}
+Authorization: Bearer {{adminAccessToken}}
+
+### Search and filter customers (administrator)
+GET {{customers}}?search=john&state=valid&vip=false
+Authorization: Bearer {{adminAccessToken}}
+
+### Customer details (owner or administrator)
+GET {{customers}}/{{customerId}}
+Authorization: Bearer {{userAccessToken}}
+
+### Customer state (owner or administrator)
+GET {{customers}}/{{customerId}}/state
+Authorization: Bearer {{userAccessToken}}
+
+### Complete the profile after identity.signed_up has provisioned an incomplete customer
+POST {{customers}}
+Authorization: Bearer {{userAccessToken}}
+Content-Type: application/json
+
+{
+  "customerId": "{{customerId}}",
+  "fullname": "John Doe",
+  "address": "New York City, Street XYZ"
+}
+
+### Edit customer details and state (administrator)
+PUT {{customers}}/{{customerId}}
+Authorization: Bearer {{adminAccessToken}}
+Content-Type: application/json
+
+{
+  "customerId": "{{customerId}}",
+  "fullName": "John A. Doe",
+  "email": "john.doe@example.com",
+  "address": "42 Broadway, New York, NY",
+  "state": "valid"
+}
+
+### Change state only (administrator)
+PUT {{customers}}/{{customerId}}/state/{{state}}
+Authorization: Bearer {{adminAccessToken}}
+Content-Type: application/json
+
+{
+  "customerId": "{{customerId}}",
+  "state": "{{state}}"
+}
