@@ -104,7 +104,7 @@ public sealed class Customer
 
     private void ValidateFullName(string fullName)
     {
-        if (string.IsNullOrWhiteSpace(fullName) || fullName.Length > 200 || fullName.Trim().Length > 200 || fullName.Contains('\0'))
+        if (string.IsNullOrWhiteSpace(fullName) || fullName.EnumerateRunes().Count() > 100 || fullName.Contains('\0'))
         {
             throw new InvalidCustomerFullNameException(Id);
         }
@@ -112,7 +112,7 @@ public sealed class Customer
 
     private void ValidateAddress(string address)
     {
-        if (string.IsNullOrWhiteSpace(address) || address.Length > 500 || address.Trim().Length > 500 || address.Contains('\0'))
+        if (string.IsNullOrWhiteSpace(address) || address.EnumerateRunes().Count() > 250 || address.Contains('\0'))
         {
             throw new InvalidCustomerAddressException(Id);
         }
@@ -127,7 +127,8 @@ public sealed class Customer
     {
         var candidate = email?.Trim();
         var atIndex = candidate?.IndexOf('@') ?? -1;
-        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(candidate) || email.Length < 6 || email.Length > 254 ||
+        if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(candidate) ||
+            !string.Equals(email, candidate, StringComparison.Ordinal) ||
             candidate.Length < 6 || candidate.Length > 254 || atIndex < 1 || atIndex > 64 || candidate.Contains('\0') ||
             !MailAddress.TryCreate(candidate, out var parsed) ||
             !string.Equals(parsed.Address, candidate, StringComparison.Ordinal) ||

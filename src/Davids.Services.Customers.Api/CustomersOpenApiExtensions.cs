@@ -43,17 +43,18 @@ public static class CustomersOpenApiExtensions
                         completeSchema.Properties is not null)
                     {
                         completeSchema.Required = new HashSet<string>(StringComparer.Ordinal) { "fullName", "address" };
-                        ConfigureNonEmptyString(completeSchema.Properties, "fullName", 200);
-                        ConfigureNonEmptyString(completeSchema.Properties, "address", 500);
+                        ConfigureNonEmptyString(completeSchema.Properties, "fullName", 100);
+                        ConfigureNonEmptyString(completeSchema.Properties, "address", 250);
                     }
 
                     if (document.Components.Schemas.TryGetValue("UpdateCustomer", out var updateRef) &&
                         updateRef is OpenApiSchema updateSchema &&
                         updateSchema.Properties is not null)
                     {
+                        updateSchema.Properties.Remove("customerId");
                         updateSchema.Required = new HashSet<string>(StringComparer.Ordinal) { "fullName", "address" };
-                        ConfigureNonEmptyString(updateSchema.Properties, "fullName", 200);
-                        ConfigureNonEmptyString(updateSchema.Properties, "address", 500);
+                        ConfigureNonEmptyString(updateSchema.Properties, "fullName", 100);
+                        ConfigureNonEmptyString(updateSchema.Properties, "address", 250);
 
                         if (updateSchema.Properties.TryGetValue("email", out var emailProp) && emailProp is OpenApiSchema emailSchema)
                         {

@@ -20,10 +20,9 @@ public sealed class CustomersService(
     {
         var effective = query ?? new CustomerSearchQuery();
         CustomerState? parsedState = null;
-        if (!string.IsNullOrWhiteSpace(effective.State))
+        if (!string.IsNullOrEmpty(effective.State))
         {
-            if (!Enum.TryParse<CustomerState>(effective.State.Trim(), true, out var candidate) ||
-                !Enum.IsDefined(candidate) || candidate == CustomerState.Unknown)
+            if (!TryParseStrictState(effective.State, out var candidate))
             {
                 throw new InvalidCustomerStateFilterException(effective.State);
             }
@@ -74,10 +73,9 @@ public sealed class CustomersService(
         var wasIncomplete = customer.State == CustomerState.Incomplete;
 
         CustomerState? requestedState = null;
-        if (!string.IsNullOrWhiteSpace(command.State))
+        if (command.State is not null)
         {
-            if (!Enum.TryParse<CustomerState>(command.State.Trim(), true, out var candidate) ||
-                !Enum.IsDefined(candidate) || candidate == CustomerState.Unknown)
+            if (!TryParseStrictState(command.State, out var candidate))
             {
                 throw new CannotChangeCustomerStateException(customer.Id, CustomerState.Unknown);
             }
@@ -138,8 +136,7 @@ public sealed class CustomersService(
     public async Task ChangeStateAsync(Guid customerId, string state, CancellationToken cancellationToken = default)
     {
         var customer = await GetCustomerAsync(customerId, cancellationToken);
-        if (!Enum.TryParse<CustomerState>(state, true, out var nextState) ||
-            !Enum.IsDefined(nextState) || nextState == CustomerState.Unknown)
+        if (!TryParseStrictState(state, out var nextState))
         {
             throw new CannotChangeCustomerStateException(customer.Id, CustomerState.Unknown);
         }
@@ -186,6 +183,28 @@ public sealed class CustomersService(
 
     private async Task<Customer> GetCustomerAsync(Guid id, CancellationToken cancellationToken)
         => await customers.GetAsync(id, cancellationToken) ?? throw new CustomerNotFoundException(id);
+
+    private static bool TryParseStrictState(string? raw, out CustomerState state)
+    {
+        switch (raw)
+        {
+            case "valid":
+                state = CustomerState.Valid;
+                return true;
+            case "incomplete":
+                state = CustomerState.Incomplete;
+                return true;
+            case "suspicious":
+                state = CustomerState.Suspicious;
+                return true;
+            case "locked":
+                state = CustomerState.Locked;
+                return true;
+            default:
+                state = CustomerState.Unknown;
+                return false;
+        }
+    }
 
     private static CustomerDto ToDto(Customer customer) => new()
     {
