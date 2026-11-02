@@ -1,5 +1,8 @@
 # Davids Customers API
 
+[![Pull Request CI — Security Gate](https://github.com/dav-Ste/Davids.Services.Customers/actions/workflows/pull-request-ci.yml/badge.svg?branch=main)](https://github.com/dav-Ste/Davids.Services.Customers/actions/workflows/pull-request-ci.yml)
+[![Pull Request CI — CodeQL SAST](https://github.com/dav-Ste/Davids.Services.Customers/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/dav-Ste/Davids.Services.Customers/actions/workflows/codeql.yml)
+
 A .NET 10 microservice managing customer profiles, lifecycle state transitions, sign-up provisioning, and the 20-order VIP threshold using EF Core SQL Server (`customersdb`), direct ASP.NET Core Minimal APIs, RabbitMQ inbox/outbox workers, and zero-shared-secret OIDC JWKS validation.
 
 ## Projects
