@@ -77,6 +77,66 @@ namespace Davids.Services.Customers.Infrastructure.Persistence.Migrations
                     b.ToTable("CustomerCompletedOrders", (string)null);
                 });
 
+            modelBuilder.Entity("Davids.Services.Customers.Core.Entities.CustomerProfileChangeAuditEntry", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("ActorAuthority")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ActorEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.Property<string>("ActorRole")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("nvarchar(32)");
+
+                    b.Property<string>("ActorSub")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("ChangedFieldsJson")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("CorrelationId")
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("datetime2");
+
+                    b.Property<Guid>("TargetCustomerId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<string>("TargetEmail")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("nvarchar(320)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("OccurredAtUtc");
+
+                    b.HasIndex("ActorSub", "OccurredAtUtc");
+
+                    b.HasIndex("TargetCustomerId", "OccurredAtUtc");
+
+                    b.ToTable("CustomerProfileChangeAuditLogs", (string)null);
+                });
+
             modelBuilder.Entity("Davids.Services.Customers.Infrastructure.Persistence.InboxMessage", b =>
                 {
                     b.Property<string>("Id")

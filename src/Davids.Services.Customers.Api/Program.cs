@@ -66,7 +66,7 @@ builder.Services.AddAuthentication(CustomersInfrastructureExtensions.CustomerSch
             OnTokenValidated = context =>
             {
                 var role = context.Principal?.FindFirstValue("role");
-                if (!string.Equals(role, "user", StringComparison.Ordinal))
+                if (!string.Equals(role, DavidsRoles.Customer, StringComparison.Ordinal))
                 {
                     context.Fail("CustomerBearer accepts customer ('user') tokens only.");
                 }
@@ -105,9 +105,9 @@ builder.Services.AddAuthentication(CustomersInfrastructureExtensions.CustomerSch
             OnTokenValidated = context =>
             {
                 var role = context.Principal?.FindFirstValue("role");
-                if (!string.Equals(role, "admin", StringComparison.Ordinal))
+                if (!DavidsRoles.CanReadWorkforce(role))
                 {
-                    context.Fail("AdminBearer accepts 'admin' role tokens only.");
+                    context.Fail("AdminBearer accepts workforce roles (admin, support, auditor) only.");
                 }
 
                 return Task.CompletedTask;
@@ -120,13 +120,25 @@ builder.Services.AddAuthorizationBuilder()
     {
         policy.AddAuthenticationSchemes(CustomersInfrastructureExtensions.CustomerScheme);
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim("role", "user");
+        policy.RequireClaim("role", DavidsRoles.Customer);
+    })
+    .AddPolicy("WorkforceRead", policy =>
+    {
+        policy.AddAuthenticationSchemes(CustomersInfrastructureExtensions.AdminScheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim("role", DavidsRoles.Admin, DavidsRoles.Support, DavidsRoles.Auditor);
+    })
+    .AddPolicy("WorkforceMutate", policy =>
+    {
+        policy.AddAuthenticationSchemes(CustomersInfrastructureExtensions.AdminScheme);
+        policy.RequireAuthenticatedUser();
+        policy.RequireClaim("role", DavidsRoles.Admin, DavidsRoles.Support);
     })
     .AddPolicy("AdminOnly", policy =>
     {
         policy.AddAuthenticationSchemes(CustomersInfrastructureExtensions.AdminScheme);
         policy.RequireAuthenticatedUser();
-        policy.RequireClaim("role", "admin");
+        policy.RequireClaim("role", DavidsRoles.Admin);
     })
     .AddPolicy("CustomerOrAdmin", policy =>
     {
@@ -173,6 +185,17 @@ if (app.Environment.IsDevelopment())
     });
 }
 
+static CustomerActorMetadata ResolveCustomerActor(ClaimsPrincipal principal, HttpContext httpContext)
+{
+    var actor = DavidsActorContext.FromPrincipal(principal, httpContext);
+    return new CustomerActorMetadata(
+        actor.ActorSub,
+        actor.ActorEmail,
+        actor.ActorRole,
+        actor.ActorAuthority,
+        actor.CorrelationId);
+}
+
 app.MapGet("/", () => Results.Text("Davids Customers Service"))
     .ExcludeFromDescription()
     .AllowAnonymous();
@@ -198,7 +221,81 @@ app.MapGet("/customers", async (
 })
 .Produces<IReadOnlyList<CustomerDto>>(StatusCodes.Status200OK)
 .Produces(StatusCodes.Status400BadRequest)
-.RequireAuthorization("AdminOnly");
+.RequireAuthorization("WorkforceRead");
+
+app.MapGet("/customers/me", async (
+    HttpContext httpContext,
+    ClaimsPrincipal user,
+    ICustomersService service,
+    CancellationToken ct) =>
+{
+    if (httpContext.Request.QueryString.HasValue)
+    {
+        return Results.BadRequest(new { code = "unexpected_query_parameters", reason = "Self-service profile endpoint does not accept query parameters." });
+    }
+
+    if (!Guid.TryParse(user.FindFirstValue("sub"), out var callerId))
+    {
+        return Results.Unauthorized();
+    }
+
+    var dto = await service.GetAsync(callerId, ct);
+    return Results.Ok(dto);
+})
+.Produces<CustomerDetailsDto>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest)
+.Produces(StatusCodes.Status404NotFound)
+.RequireAuthorization("CustomerOnly");
+
+app.MapPut("/customers/me", async (
+    HttpContext httpContext,
+    UpdateMyCustomerProfile body,
+    ClaimsPrincipal user,
+    ICustomersService service,
+    CancellationToken ct) =>
+{
+    if (httpContext.Request.QueryString.HasValue)
+    {
+        return Results.BadRequest(new { code = "unexpected_query_parameters", reason = "Self-service profile endpoint does not accept query parameters." });
+    }
+
+    if (body is null)
+    {
+        return Results.BadRequest(new { code = "invalid_request", reason = "Request body is required." });
+    }
+
+    if (!Guid.TryParse(user.FindFirstValue("sub"), out var callerId))
+    {
+        return Results.Unauthorized();
+    }
+
+    var actor = ResolveCustomerActor(user, httpContext);
+    var updated = await service.UpdateSelfServiceAsync(callerId, body, actor, ct);
+    return Results.Ok(updated);
+})
+.Produces<CustomerDetailsDto>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest)
+.Produces(StatusCodes.Status404NotFound)
+.RequireAuthorization("CustomerOnly");
+
+app.MapGet("/customers/change-audits", async (
+    int? limit,
+    Guid? targetCustomerId,
+    string? actorSub,
+    ICustomersService service,
+    CancellationToken ct) =>
+{
+    if (limit is < 1 or > 500)
+    {
+        return Results.BadRequest(new { code = "invalid_limit", reason = "Limit must be between 1 and 500." });
+    }
+
+    var entries = await service.BrowseChangeAuditsAsync(limit ?? 100, targetCustomerId, actorSub, ct);
+    return Results.Ok(entries);
+})
+.Produces<IReadOnlyList<CustomerProfileChangeAuditDto>>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest)
+.RequireAuthorization("WorkforceRead");
 
 app.MapGet("/customers/{customerId:guid}", async (
     Guid customerId,
@@ -212,9 +309,9 @@ app.MapGet("/customers/{customerId:guid}", async (
         return Results.BadRequest(new { code = "unexpected_query_parameters", reason = "Resource identifier endpoint does not accept query parameters." });
     }
 
-    var isAdmin = user.HasClaim("role", "admin");
+    var isWorkforce = DavidsRoles.CanReadWorkforce(user.FindFirstValue("role"));
     var isOwner = Guid.TryParse(user.FindFirstValue("sub"), out var callerId) && callerId == customerId;
-    if (!isAdmin && !isOwner)
+    if (!isWorkforce && !isOwner)
     {
         return Results.Forbid();
     }
@@ -239,9 +336,9 @@ app.MapGet("/customers/{customerId:guid}/state", async (
         return Results.BadRequest(new { code = "unexpected_query_parameters", reason = "Customer state endpoint does not accept query parameters." });
     }
 
-    var isAdmin = user.HasClaim("role", "admin");
+    var isWorkforce = DavidsRoles.CanReadWorkforce(user.FindFirstValue("role"));
     var isOwner = Guid.TryParse(user.FindFirstValue("sub"), out var callerId) && callerId == customerId;
-    if (!isAdmin && !isOwner)
+    if (!isWorkforce && !isOwner)
     {
         return Results.Forbid();
     }
@@ -253,8 +350,34 @@ app.MapGet("/customers/{customerId:guid}/state", async (
 .Produces(StatusCodes.Status404NotFound)
 .RequireAuthorization("CustomerOrAdmin");
 
+app.MapGet("/customers/{customerId:guid}/change-audits", async (
+    Guid customerId,
+    int? limit,
+    ClaimsPrincipal user,
+    ICustomersService service,
+    CancellationToken ct) =>
+{
+    if (limit is < 1 or > 200)
+    {
+        return Results.BadRequest(new { code = "invalid_limit", reason = "Limit must be between 1 and 200." });
+    }
+
+    var isWorkforce = DavidsRoles.CanReadWorkforce(user.FindFirstValue("role"));
+    var isOwner = Guid.TryParse(user.FindFirstValue("sub"), out var callerId) && callerId == customerId;
+    if (!isWorkforce && !isOwner)
+    {
+        return Results.Forbid();
+    }
+
+    return Results.Ok(await service.BrowseChangeAuditsAsync(limit ?? 50, customerId, actorSub: null, ct));
+})
+.Produces<IReadOnlyList<CustomerProfileChangeAuditDto>>(StatusCodes.Status200OK)
+.Produces(StatusCodes.Status400BadRequest)
+.RequireAuthorization("CustomerOrAdmin");
+
 app.MapPost("/customers", async (
     CompleteCustomerRegistration command,
+    HttpContext httpContext,
     ClaimsPrincipal user,
     ICustomersService service,
     CancellationToken ct) =>
@@ -275,7 +398,8 @@ app.MapPost("/customers", async (
         return Results.Forbid();
     }
 
-    await service.CompleteRegistrationAsync(effective, ct);
+    var actor = ResolveCustomerActor(user, httpContext);
+    await service.CompleteRegistrationAsync(effective, ct, actor);
     return Results.Created($"customers/{effective.CustomerId}", (object?)null);
 })
 .Produces(StatusCodes.Status201Created)
@@ -288,6 +412,7 @@ app.MapPut("/customers/{customerId:guid}", async (
     Guid customerId,
     HttpContext httpContext,
     UpdateCustomer body,
+    ClaimsPrincipal user,
     ICustomersService service,
     CancellationToken ct) =>
 {
@@ -306,19 +431,21 @@ app.MapPut("/customers/{customerId:guid}", async (
         return Results.BadRequest(new { code = "customer_id_mismatch", reason = "Payload customerId must match route customerId when specified." });
     }
 
-    var updated = await service.UpdateAsync(body with { CustomerId = customerId }, ct);
+    var actor = ResolveCustomerActor(user, httpContext);
+    var updated = await service.UpdateAsync(body with { CustomerId = customerId }, ct, actor);
     return Results.Ok(updated);
 })
 .Produces<CustomerDetailsDto>(StatusCodes.Status200OK)
 .Produces(StatusCodes.Status400BadRequest)
 .Produces(StatusCodes.Status404NotFound)
 .Produces(StatusCodes.Status409Conflict)
-.RequireAuthorization("AdminOnly");
+.RequireAuthorization("WorkforceMutate");
 
 app.MapPut("/customers/{customerId:guid}/state/{state}", async (
     Guid customerId,
     string state,
     HttpContext httpContext,
+    ClaimsPrincipal user,
     ICustomersService service,
     CancellationToken ct) =>
 {
@@ -327,13 +454,14 @@ app.MapPut("/customers/{customerId:guid}/state/{state}", async (
         return Results.BadRequest(new { code = "unexpected_query_parameters", reason = "Customer state transition endpoint does not accept query parameters." });
     }
 
-    await service.ChangeStateAsync(customerId, state, ct);
+    var actor = ResolveCustomerActor(user, httpContext);
+    await service.ChangeStateAsync(customerId, state, ct, actor);
     return Results.NoContent();
 })
 .Produces(StatusCodes.Status204NoContent)
 .Produces(StatusCodes.Status400BadRequest)
 .Produces(StatusCodes.Status404NotFound)
-.RequireAuthorization("AdminOnly");
+.RequireAuthorization("WorkforceMutate");
 
 app.Run();
 public partial class Program;

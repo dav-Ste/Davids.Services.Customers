@@ -19,6 +19,7 @@ public sealed class CustomersMessageWorker(
     ILogger<CustomersMessageWorker> logger) : BackgroundService
 {
     private const string SignUpQueue = "customers-service/identity.signed_up";
+    private const string EmailChangedQueue = "customers-service/identity.email_changed";
     private const string OrderCompletedQueue = "customers-service/orders.order_completed";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -73,6 +74,11 @@ public sealed class CustomersMessageWorker(
         await consumerChannel.QueueDeclareAsync(SignUpQueue, durable: true, exclusive: false, autoDelete: false,
             arguments: deadLetterArguments, cancellationToken: cancellationToken);
         await consumerChannel.QueueBindAsync(SignUpQueue, "identity", "signed_up", cancellationToken: cancellationToken);
+
+        await consumerChannel.QueueDeclareAsync(EmailChangedQueue, durable: true, exclusive: false, autoDelete: false,
+            arguments: deadLetterArguments, cancellationToken: cancellationToken);
+        await consumerChannel.QueueBindAsync(EmailChangedQueue, "identity", "email_changed", cancellationToken: cancellationToken);
+
         await consumerChannel.QueueDeclareAsync(OrderCompletedQueue, durable: true, exclusive: false, autoDelete: false,
             arguments: deadLetterArguments, cancellationToken: cancellationToken);
         await consumerChannel.QueueBindAsync(OrderCompletedQueue, "orders", "order_completed", cancellationToken: cancellationToken);
@@ -82,6 +88,11 @@ public sealed class CustomersMessageWorker(
         signUpConsumer.ReceivedAsync += async (_, args) =>
             await ProcessMessageAsync<SignedUp>(args, consumerChannel, ProcessSignedUpAsync, cancellationToken);
         await consumerChannel.BasicConsumeAsync(SignUpQueue, autoAck: false, signUpConsumer, cancellationToken);
+
+        var emailChangedConsumer = new AsyncEventingBasicConsumer(consumerChannel);
+        emailChangedConsumer.ReceivedAsync += async (_, args) =>
+            await ProcessMessageAsync<EmailChanged>(args, consumerChannel, ProcessEmailChangedAsync, cancellationToken);
+        await consumerChannel.BasicConsumeAsync(EmailChangedQueue, autoAck: false, emailChangedConsumer, cancellationToken);
 
         var orderConsumer = new AsyncEventingBasicConsumer(consumerChannel);
         orderConsumer.ReceivedAsync += async (_, args) =>
@@ -167,6 +178,12 @@ public sealed class CustomersMessageWorker(
         ICustomersService service,
         CancellationToken cancellationToken)
         => service.CreateFromSignedUpAsync(message, cancellationToken);
+
+    private static Task ProcessEmailChangedAsync(
+        EmailChanged message,
+        ICustomersService service,
+        CancellationToken cancellationToken)
+        => service.SyncEmailFromIdentityAsync(message, cancellationToken);
 
     private static Task ProcessOrderCompletedAsync(
         OrderCompleted message,

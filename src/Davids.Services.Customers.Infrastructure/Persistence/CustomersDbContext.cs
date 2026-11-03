@@ -7,6 +7,7 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
 {
     public DbSet<Customer> Customers => Set<Customer>();
     public DbSet<CustomerCompletedOrder> CompletedOrders => Set<CustomerCompletedOrder>();
+    public DbSet<CustomerProfileChangeAuditEntry> CustomerProfileChangeAuditLogs => Set<CustomerProfileChangeAuditEntry>();
     public DbSet<OutboxMessage> Outbox => Set<OutboxMessage>();
     public DbSet<InboxMessage> Inbox => Set<InboxMessage>();
 
@@ -32,6 +33,23 @@ public sealed class CustomersDbContext(DbContextOptions<CustomersDbContext> opti
             entity.ToTable("CustomerCompletedOrders");
             entity.HasKey(order => new { order.CustomerId, order.OrderId });
             entity.HasIndex(order => order.OrderId);
+        });
+
+        modelBuilder.Entity<CustomerProfileChangeAuditEntry>(entity =>
+        {
+            entity.ToTable("CustomerProfileChangeAuditLogs");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.TargetEmail).IsRequired().HasMaxLength(320);
+            entity.Property(x => x.Action).IsRequired().HasMaxLength(64);
+            entity.Property(x => x.ActorSub).IsRequired().HasMaxLength(64);
+            entity.Property(x => x.ActorEmail).HasMaxLength(320);
+            entity.Property(x => x.ActorRole).IsRequired().HasMaxLength(32);
+            entity.Property(x => x.ActorAuthority).IsRequired().HasMaxLength(32);
+            entity.Property(x => x.ChangedFieldsJson).IsRequired();
+            entity.Property(x => x.CorrelationId).HasMaxLength(128);
+            entity.HasIndex(x => x.OccurredAtUtc);
+            entity.HasIndex(x => new { x.TargetCustomerId, x.OccurredAtUtc });
+            entity.HasIndex(x => new { x.ActorSub, x.OccurredAtUtc });
         });
 
         modelBuilder.Entity<OutboxMessage>(entity =>

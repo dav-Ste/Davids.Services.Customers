@@ -47,6 +47,15 @@ public static class CustomersOpenApiExtensions
                         ConfigureNonEmptyString(completeSchema.Properties, "address", 250);
                     }
 
+                    if (document.Components.Schemas.TryGetValue("UpdateMyCustomerProfile", out var selfRef) &&
+                        selfRef is OpenApiSchema selfSchema &&
+                        selfSchema.Properties is not null)
+                    {
+                        selfSchema.Required = new HashSet<string>(StringComparer.Ordinal) { "fullName", "address" };
+                        ConfigureNonEmptyString(selfSchema.Properties, "fullName", 100);
+                        ConfigureNonEmptyString(selfSchema.Properties, "address", 250);
+                    }
+
                     if (document.Components.Schemas.TryGetValue("UpdateCustomer", out var updateRef) &&
                         updateRef is OpenApiSchema updateSchema &&
                         updateSchema.Properties is not null)

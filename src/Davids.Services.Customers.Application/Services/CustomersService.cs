@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Davids.Services.Customers.Application.Commands;
 using Davids.Services.Customers.Application.DTO;
 using Davids.Services.Customers.Application.Events;
@@ -11,6 +12,11 @@ public sealed class CustomersService(
     ICustomerRepository customers,
     IOutboxWriter outbox) : ICustomersService
 {
+    private static readonly JsonSerializerOptions AuditJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
     public Task<IReadOnlyList<CustomerDto>> GetAllAsync(CancellationToken cancellationToken = default)
         => SearchAsync(new CustomerSearchQuery(), cancellationToken);
 
@@ -52,7 +58,8 @@ public sealed class CustomersService(
 
     public async Task CompleteRegistrationAsync(
         CompleteCustomerRegistration command,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        CustomerActorMetadata? actor = null)
     {
         var customer = await GetCustomerAsync(command.CustomerId, cancellationToken);
         if (customer.State != CustomerState.Incomplete)
@@ -60,17 +67,90 @@ public sealed class CustomersService(
             throw new CustomerAlreadyRegisteredException(command.CustomerId);
         }
 
+        var oldName = customer.FullName;
+        var oldAddress = customer.Address;
+        var oldState = StateName(customer.State);
         customer.CompleteRegistration(command.FullName, command.Address);
+
+        var changes = new List<CustomerProfileFieldChangeDto>
+        {
+            new("fullName", oldName, customer.FullName),
+            new("address", oldAddress, customer.Address),
+            new("state", oldState, StateName(customer.State))
+        };
+        RecordChangeAudit(customer, "registration_completed", changes, actor, defaultAuthority: "customer", defaultRole: "user");
+
         outbox.Enqueue("customer_created", new CustomerCreated(customer.Id));
         await customers.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<CustomerDetailsDto> UpdateSelfServiceAsync(
+        Guid customerId,
+        UpdateMyCustomerProfile command,
+        CustomerActorMetadata actor,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ArgumentNullException.ThrowIfNull(actor);
+
+        var customer = await GetCustomerAsync(customerId, cancellationToken);
+        var oldName = customer.FullName;
+        var oldAddress = customer.Address;
+        var oldState = StateName(customer.State);
+
+        if (customer.State == CustomerState.Incomplete)
+        {
+            customer.CompleteRegistration(command.FullName, command.Address);
+            var completionChanges = new List<CustomerProfileFieldChangeDto>
+            {
+                new("fullName", oldName, customer.FullName),
+                new("address", oldAddress, customer.Address),
+                new("state", oldState, StateName(customer.State))
+            };
+            RecordChangeAudit(customer, "registration_completed", completionChanges, actor, "customer", "user");
+            outbox.Enqueue("customer_created", new CustomerCreated(customer.Id));
+            await customers.SaveChangesAsync(cancellationToken);
+            return ToDetailsDto(customer);
+        }
+
+        var changed = customer.UpdateSelfServiceDetails(command.FullName, command.Address);
+        if (changed)
+        {
+            var changes = new List<CustomerProfileFieldChangeDto>();
+            if (!string.Equals(oldName, customer.FullName, StringComparison.Ordinal))
+            {
+                changes.Add(new CustomerProfileFieldChangeDto("fullName", oldName, customer.FullName));
+            }
+
+            if (!string.Equals(oldAddress, customer.Address, StringComparison.Ordinal))
+            {
+                changes.Add(new CustomerProfileFieldChangeDto("address", oldAddress, customer.Address));
+            }
+
+            RecordChangeAudit(customer, "profile_updated", changes, actor, "customer", "user");
+            outbox.Enqueue("customer_updated", new CustomerUpdated(
+                customer.Id,
+                customer.Email,
+                customer.FullName,
+                customer.Address,
+                StateName(customer.State)));
+            await customers.SaveChangesAsync(cancellationToken);
+        }
+
+        return ToDetailsDto(customer);
+    }
+
     public async Task<CustomerDetailsDto> UpdateAsync(
         UpdateCustomer command,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        CustomerActorMetadata? actor = null)
     {
         var customer = await GetCustomerAsync(command.CustomerId, cancellationToken);
         var wasIncomplete = customer.State == CustomerState.Incomplete;
+        var oldName = customer.FullName;
+        var oldAddress = customer.Address;
+        var oldEmail = customer.Email;
+        var oldState = StateName(customer.State);
 
         CustomerState? requestedState = null;
         if (command.State is not null)
@@ -127,13 +207,39 @@ public sealed class CustomersService(
 
         if (detailsChanged || stateChanged)
         {
+            var changes = new List<CustomerProfileFieldChangeDto>();
+            if (!string.Equals(oldName, customer.FullName, StringComparison.Ordinal))
+            {
+                changes.Add(new CustomerProfileFieldChangeDto("fullName", oldName, customer.FullName));
+            }
+
+            if (!string.Equals(oldAddress, customer.Address, StringComparison.Ordinal))
+            {
+                changes.Add(new CustomerProfileFieldChangeDto("address", oldAddress, customer.Address));
+            }
+
+            if (!string.Equals(oldEmail, customer.Email, StringComparison.Ordinal))
+            {
+                changes.Add(new CustomerProfileFieldChangeDto("email", oldEmail, customer.Email));
+            }
+
+            if (!string.Equals(oldState, StateName(customer.State), StringComparison.Ordinal))
+            {
+                changes.Add(new CustomerProfileFieldChangeDto("state", oldState, StateName(customer.State)));
+            }
+
+            RecordChangeAudit(customer, "profile_updated", changes, actor, defaultAuthority: "employee", defaultRole: "admin");
             await customers.SaveChangesAsync(cancellationToken);
         }
 
         return ToDetailsDto(customer);
     }
 
-    public async Task ChangeStateAsync(Guid customerId, string state, CancellationToken cancellationToken = default)
+    public async Task ChangeStateAsync(
+        Guid customerId,
+        string state,
+        CancellationToken cancellationToken = default,
+        CustomerActorMetadata? actor = null)
     {
         var customer = await GetCustomerAsync(customerId, cancellationToken);
         if (!TryParseStrictState(state, out var nextState))
@@ -147,6 +253,12 @@ public sealed class CustomersService(
         }
 
         var previousState = customer.ChangeState(nextState);
+        var changes = new List<CustomerProfileFieldChangeDto>
+        {
+            new("state", StateName(previousState), StateName(customer.State))
+        };
+        RecordChangeAudit(customer, "state_changed", changes, actor, defaultAuthority: "employee", defaultRole: "admin");
+
         outbox.Enqueue("customer_state_changed", new CustomerStateChanged(
             customer.Id, StateName(customer.State), StateName(previousState)));
         await customers.SaveChangesAsync(cancellationToken);
@@ -170,6 +282,53 @@ public sealed class CustomersService(
         await customers.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task SyncEmailFromIdentityAsync(EmailChanged message, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(message);
+
+        var customer = await customers.GetAsync(message.UserId, cancellationToken);
+        if (customer is null)
+        {
+            return;
+        }
+
+        if (await customers.ExistsWithEmailAsync(message.NewEmail, customer.Id, cancellationToken))
+        {
+            throw new CustomerEmailInUseException(message.NewEmail);
+        }
+
+        var oldEmail = customer.Email;
+        if (!customer.SyncEmailFromIdentity(message.NewEmail))
+        {
+            return;
+        }
+
+        var changes = new List<CustomerProfileFieldChangeDto>
+        {
+            new("email", oldEmail, customer.Email)
+        };
+        customers.AddChangeAudit(new CustomerProfileChangeAuditEntry(
+            Guid.NewGuid(),
+            DateTime.UtcNow,
+            customer.Id,
+            customer.Email,
+            "email_synced_from_identity",
+            "identity-outbox",
+            customer.Email,
+            "system",
+            "identity-sync",
+            JsonSerializer.Serialize(changes, AuditJsonOptions),
+            correlationId: null));
+
+        outbox.Enqueue("customer_updated", new CustomerUpdated(
+            customer.Id,
+            customer.Email,
+            customer.FullName,
+            customer.Address,
+            StateName(customer.State)));
+        await customers.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task RecordCompletedOrderAsync(OrderCompleted message, CancellationToken cancellationToken = default)
     {
         var customer = await GetCustomerAsync(message.CustomerId, cancellationToken);
@@ -179,6 +338,53 @@ public sealed class CustomersService(
         }
 
         await customers.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<CustomerProfileChangeAuditDto>> BrowseChangeAuditsAsync(
+        int limit = 100,
+        Guid? targetCustomerId = null,
+        string? actorSub = null,
+        CancellationToken cancellationToken = default)
+    {
+        var entries = await customers.BrowseChangeAuditsAsync(limit, targetCustomerId, actorSub, cancellationToken);
+        return entries.Select(CustomerProfileChangeAuditDto.FromEntity).ToArray();
+    }
+
+    private void RecordChangeAudit(
+        Customer customer,
+        string action,
+        List<CustomerProfileFieldChangeDto> changes,
+        CustomerActorMetadata? actor,
+        string defaultAuthority,
+        string defaultRole)
+    {
+        if (changes.Count == 0)
+        {
+            return;
+        }
+
+        var actorSub = string.IsNullOrWhiteSpace(actor?.ActorSub)
+            ? customer.Id.ToString("D")
+            : actor.ActorSub;
+        var actorAuthority = string.IsNullOrWhiteSpace(actor?.ActorAuthority)
+            ? defaultAuthority
+            : actor.ActorAuthority;
+        var actorRole = string.IsNullOrWhiteSpace(actor?.ActorRole)
+            ? defaultRole
+            : actor.ActorRole;
+
+        customers.AddChangeAudit(new CustomerProfileChangeAuditEntry(
+            Guid.NewGuid(),
+            DateTime.UtcNow,
+            customer.Id,
+            customer.Email,
+            action,
+            actorSub,
+            actor?.ActorEmail ?? (actorAuthority == "customer" ? customer.Email : null),
+            actorRole,
+            actorAuthority,
+            JsonSerializer.Serialize(changes, AuditJsonOptions),
+            actor?.CorrelationId));
     }
 
     private async Task<Customer> GetCustomerAsync(Guid id, CancellationToken cancellationToken)

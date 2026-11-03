@@ -1,11 +1,21 @@
+using System.Diagnostics.Metrics;
 using Davids.Services.Customers.Core.Entities;
 using Davids.Services.Customers.Core.Repositories;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace Davids.Services.Customers.Infrastructure.Persistence;
 
-public sealed class CustomerRepository(CustomersDbContext db) : ICustomerRepository
+public sealed class CustomerRepository(
+    CustomersDbContext db,
+    ILoggerFactory? loggerFactory = null) : ICustomerRepository
 {
+    private static readonly Meter AuditMeter = new("Davids.Security.Audit", "1.0.0");
+    private static readonly Counter<long> ChangeAuditCounter =
+        AuditMeter.CreateCounter<long>("davids.security.change_audit", unit: "{event}");
+
+    private readonly List<CustomerProfileChangeAuditEntry> _pendingAudits = [];
+
     public Task<Customer?> GetAsync(Guid id, CancellationToken cancellationToken = default)
         => db.Customers.Include(customer => customer.CompletedOrders)
             .SingleOrDefaultAsync(customer => customer.Id == id, cancellationToken);
@@ -96,8 +106,68 @@ public sealed class CustomerRepository(CustomersDbContext db) : ICustomerReposit
 
     public void Add(Customer customer) => db.Customers.Add(customer);
 
+    public void AddChangeAudit(CustomerProfileChangeAuditEntry entry)
+    {
+        db.CustomerProfileChangeAuditLogs.Add(entry);
+        _pendingAudits.Add(entry);
+    }
+
+    public async Task<IReadOnlyList<CustomerProfileChangeAuditEntry>> BrowseChangeAuditsAsync(
+        int limit = 100,
+        Guid? targetCustomerId = null,
+        string? actorSub = null,
+        CancellationToken cancellationToken = default)
+    {
+        var clamped = Math.Clamp(limit, 1, 500);
+        IQueryable<CustomerProfileChangeAuditEntry> query = db.CustomerProfileChangeAuditLogs.AsNoTracking();
+
+        if (targetCustomerId.HasValue)
+        {
+            query = query.Where(x => x.TargetCustomerId == targetCustomerId.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(actorSub))
+        {
+            var trimmed = actorSub.Trim();
+            query = query.Where(x => x.ActorSub == trimmed);
+        }
+
+        return await query
+            .OrderByDescending(x => x.OccurredAtUtc)
+            .ThenByDescending(x => x.Id)
+            .Take(clamped)
+            .ToArrayAsync(cancellationToken);
+    }
+
     public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
-        => await db.SaveChangesAsync(cancellationToken);
+    {
+        await db.SaveChangesAsync(cancellationToken);
+        if (_pendingAudits.Count == 0)
+        {
+            return;
+        }
+
+        var auditLogger = loggerFactory?.CreateLogger("Davids.Security.Audit");
+        foreach (var entry in _pendingAudits)
+        {
+            ChangeAuditCounter.Add(
+                1,
+                new KeyValuePair<string, object?>("service", "customers"),
+                new KeyValuePair<string, object?>("action", entry.Action),
+                new KeyValuePair<string, object?>("actor_authority", entry.ActorAuthority));
+            auditLogger?.LogInformation(
+                "Audit: recorded customers profile change {Action} on {TargetCustomerId} by {ActorAuthority} {ActorSub} (ActorRole={ActorRole}, SecurityAuditEvent={SecurityAuditEvent}, CorrelationId={CorrelationId}).",
+                entry.Action,
+                entry.TargetCustomerId,
+                entry.ActorAuthority,
+                entry.ActorSub,
+                entry.ActorRole,
+                "ChangeAudit",
+                entry.CorrelationId ?? "none");
+        }
+
+        _pendingAudits.Clear();
+    }
 
     private static bool IsHexOrHyphen(string value)
         => value.All(character => character == '-' || Uri.IsHexDigit(character));

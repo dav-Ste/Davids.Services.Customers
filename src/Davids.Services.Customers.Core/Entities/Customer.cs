@@ -48,6 +48,27 @@ public sealed class Customer
         State = CustomerState.Valid;
     }
 
+    public bool UpdateSelfServiceDetails(string fullName, string address)
+    {
+        if (State == CustomerState.Locked)
+        {
+            throw new CannotChangeCustomerStateException(Id, State);
+        }
+
+        ValidateFullName(fullName);
+        ValidateAddress(address);
+
+        var normalizedFullName = fullName.Trim();
+        var normalizedAddress = address.Trim();
+
+        var changed = !string.Equals(FullName, normalizedFullName, StringComparison.Ordinal) ||
+                      !string.Equals(Address, normalizedAddress, StringComparison.Ordinal);
+
+        FullName = normalizedFullName;
+        Address = normalizedAddress;
+        return changed;
+    }
+
     public bool UpdateDetails(string fullName, string address, string? email = null)
     {
         ValidateFullName(fullName);
@@ -71,6 +92,19 @@ public sealed class Customer
         Address = normalizedAddress;
         Email = normalizedEmail;
         return changed;
+    }
+
+    public bool SyncEmailFromIdentity(string newEmail)
+    {
+        ValidateEmail(newEmail);
+        var normalized = newEmail.Trim().ToLowerInvariant();
+        if (string.Equals(Email, normalized, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        Email = normalized;
+        return true;
     }
 
     public CustomerState ChangeState(CustomerState state)

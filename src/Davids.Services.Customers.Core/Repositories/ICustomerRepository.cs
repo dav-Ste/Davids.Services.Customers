@@ -16,5 +16,11 @@ public interface ICustomerRepository
         Guid excludingCustomerId,
         CancellationToken cancellationToken = default);
     void Add(Customer customer);
+    void AddChangeAudit(CustomerProfileChangeAuditEntry entry);
+    Task<IReadOnlyList<CustomerProfileChangeAuditEntry>> BrowseChangeAuditsAsync(
+        int limit = 100,
+        Guid? targetCustomerId = null,
+        string? actorSub = null,
+        CancellationToken cancellationToken = default);
     Task SaveChangesAsync(CancellationToken cancellationToken = default);
 }

@@ -43,12 +43,16 @@ All paths below are called through the YARP gateway (`:17320`) or directly on `:
 
 | Method | Path | Access | Result |
 |---|---|---|---|
-| `GET` | `/customers?search=&state=&vip=` | Administrator (`admin`) | Array of `{ id, email, fullName, address, isVip, state, createdAt, completedOrdersCount }` |
-| `GET` | `/customers/{customerId}` | Owner or administrator | Details including email, full name, address, state, VIP flag, `createdAt`, and completed order IDs |
-| `GET` | `/customers/{customerId}/state` | Owner or administrator | `{ id, state }` |
-| `POST` | `/customers` | Owner or administrator | Completes an existing incomplete profile (`customerId`, `fullName`, `address`); `201 Created` |
-| `PUT` | `/customers/{customerId}` | Administrator (`admin`) | Updates `fullName`, `address`, optional `email` (unique), and optional `state`; `200 OK` with `CustomerDetailsDto` |
-| `PUT` | `/customers/{customerId}/state/{state}` | Administrator (`admin`) | Changes lifecycle state; `204 No Content` |
+| `GET` | `/customers/me` | `CustomerBearer` (`user`) | Self-service profile details for the authenticated customer |
+| `PUT` | `/customers/me` | `CustomerBearer` (`user`) | Self-service update of `fullName` and `address` (cannot alter `isVip` or `state`); records `CustomerProfileChangeAuditLogs` |
+| `GET` | `/customers?search=&state=&vip=` | Workforce (`admin`/`support`/`auditor`) | Array of `{ id, email, fullName, address, isVip, state, createdAt, completedOrdersCount }` |
+| `GET` | `/customers/{customerId}` | Owner or Workforce (`admin`/`support`/`auditor`) | Details including email, full name, address, state, VIP flag, `createdAt`, and completed order IDs |
+| `GET` | `/customers/{customerId}/state` | Owner or Workforce (`admin`/`support`/`auditor`) | `{ id, state }` |
+| `POST` | `/customers` | Owner or Workforce (`admin`/`support`) | Completes an existing incomplete profile (`customerId`, `fullName`, `address`); `201 Created` |
+| `PUT` | `/customers/{customerId}` | Workforce (`admin`/`support`) | Updates `fullName`, `address`, optional `email` (unique), and optional `state` + transactional `CustomerProfileChangeAuditLogs` |
+| `PUT` | `/customers/{customerId}/state/{state}` | Workforce (`admin`/`support`) | Changes lifecycle state + transactional `CustomerProfileChangeAuditLogs`; `204 No Content` |
+| `GET` | `/customers/change-audits` | Workforce (`admin`/`support`/`auditor`) | Recent customer profile change-audit trail |
+| `GET` | `/customers/{customerId}/change-audits` | Workforce (`admin`/`support`/`auditor`) | Change-audit trail for a single customer |
 | `GET` | `/health`, `/alive` | Probe | Readiness and liveness endpoints wired via `Davids.ServiceDefaults` |
 
 ## Event integration
@@ -80,4 +84,5 @@ docker build -f Davids.Services.Customers/Dockerfile -t davids-customers:local .
 - [`Davids.APIGateway`](https://github.com/dav-Ste/Davids.APIGateway) — YARP `2.3.0` edge reverse proxy & confidential Admin OIDC BFF
 - [`Davids.Services.Identity`](https://github.com/dav-Ste/Davids.Services.Identity) — Customer OpenIddict `RS256` OIDC Provider (`identitydb`)
 - [`Davids.Services.AdminIdentity`](https://github.com/dav-Ste/Davids.Services.AdminIdentity) — Administrator OpenIddict `RS256` OIDC Provider (`adminidentitydb`)
-- [`Davids.Frontend.Admin`](https://github.com/dav-Ste/Davids.Frontend.Admin) — Passwordless Admin customer search & editing web UI
+- [`Davids.Frontend.Admin`](https://github.com/dav-Ste/Davids.Frontend.Admin) — Passwordless Workforce RBAC customer, IAM & audit web UI
+- [`Davids.Frontend.Web`](https://github.com/dav-Ste/Davids.Frontend.Web) — Customer Self-Service Web Portal (`CustomerBffCookie` PKCE `S256` BFF)
