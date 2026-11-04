@@ -210,6 +210,12 @@ app.MapGet("/customers", async (
     string? query = null,
     string? state = null) =>
 {
+    if ((search is not null && (search.Length > 100 || search.Contains('\0'))) ||
+        (query is not null && (query.Length > 100 || query.Contains('\0'))))
+    {
+        return Results.BadRequest(new { code = "invalid_search", reason = "Search query must be at most 100 characters without control bytes." });
+    }
+
     var effectiveSearch = search ?? query;
     var effectiveVip = isVip ?? vipOnly ?? vip;
     if (string.IsNullOrWhiteSpace(effectiveSearch) && string.IsNullOrWhiteSpace(state) && effectiveVip is null)
@@ -288,6 +294,11 @@ app.MapGet("/customers/change-audits", async (
     if (limit is < 1 or > 500)
     {
         return Results.BadRequest(new { code = "invalid_limit", reason = "Limit must be between 1 and 500." });
+    }
+
+    if (actorSub is not null && (actorSub.Length > 128 || actorSub.Contains('\0')))
+    {
+        return Results.BadRequest(new { code = "invalid_actor_sub", reason = "Actor subject filter is invalid." });
     }
 
     var entries = await service.BrowseChangeAuditsAsync(limit ?? 100, targetCustomerId, actorSub, ct);
@@ -369,10 +380,12 @@ app.MapGet("/customers/{customerId:guid}/change-audits", async (
         return Results.Forbid();
     }
 
+    _ = await service.GetAsync(customerId, ct);
     return Results.Ok(await service.BrowseChangeAuditsAsync(limit ?? 50, customerId, actorSub: null, ct));
 })
 .Produces<IReadOnlyList<CustomerProfileChangeAuditDto>>(StatusCodes.Status200OK)
 .Produces(StatusCodes.Status400BadRequest)
+.Produces(StatusCodes.Status404NotFound)
 .RequireAuthorization("CustomerOrAdmin");
 
 app.MapPost("/customers", async (

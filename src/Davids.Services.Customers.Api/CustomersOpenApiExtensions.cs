@@ -42,6 +42,7 @@ public static class CustomersOpenApiExtensions
                         completeRef is OpenApiSchema completeSchema &&
                         completeSchema.Properties is not null)
                     {
+                        completeSchema.Properties.Remove("customerId");
                         completeSchema.Required = new HashSet<string>(StringComparer.Ordinal) { "fullName", "address" };
                         ConfigureNonEmptyString(completeSchema.Properties, "fullName", 100);
                         ConfigureNonEmptyString(completeSchema.Properties, "address", 250);
@@ -81,7 +82,7 @@ public static class CustomersOpenApiExtensions
                     }
                 }
 
-                foreach (var (_, pathItem) in document.Paths ?? [])
+                foreach (var (pathKey, pathItem) in document.Paths ?? [])
                 {
                     foreach (var (_, operation) in pathItem.Operations ?? [])
                     {
@@ -98,6 +99,28 @@ public static class CustomersOpenApiExtensions
                                 paramSchema.Enum = parameter.In == ParameterLocation.Query
                                     ? [JsonValue.Create(string.Empty), .. AllowedStates]
                                     : [.. AllowedStates];
+                            }
+                            else if (string.Equals(parameter.Name, "limit", StringComparison.Ordinal) &&
+                                     parameter.Schema is OpenApiSchema limitSchema)
+                            {
+                                limitSchema.Type = JsonSchemaType.Integer;
+                                limitSchema.Minimum = "1";
+                                limitSchema.Maximum = string.Equals(pathKey, "/customers/change-audits", StringComparison.Ordinal)
+                                    ? "500"
+                                    : "200";
+                            }
+                            else if (string.Equals(parameter.Name, "actorSub", StringComparison.Ordinal) &&
+                                     parameter.Schema is OpenApiSchema actorSchema)
+                            {
+                                actorSchema.MaxLength = 128;
+                                actorSchema.Pattern = @"^[^\u0000]*$";
+                            }
+                            else if ((string.Equals(parameter.Name, "search", StringComparison.Ordinal) ||
+                                      string.Equals(parameter.Name, "query", StringComparison.Ordinal)) &&
+                                     parameter.Schema is OpenApiSchema searchSchema)
+                            {
+                                searchSchema.MaxLength = 100;
+                                searchSchema.Pattern = @"^[^\u0000]*$";
                             }
                         }
 
